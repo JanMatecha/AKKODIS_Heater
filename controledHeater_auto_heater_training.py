@@ -245,11 +245,15 @@ for i in range(N):
                 fmu.freeInstance()
             shutil.rmtree(unzip_dir, ignore_errors=True)
 
-print(training_data)
+
+outside_temp_train = training_data[0][5]
+inside_temp_train = training_data[0][1]
 # Save the training data to a file
-with open("training_data.txt", "w", newline="") as f:
-    writer = csv.writer(f, delimiter=",")
-    writer.writerows(training_data)
+
+
+# Save the training data to a .npy
+np.save("training_data_out.npy", outside_temp_train)
+np.save("training_data_in.npy", inside_temp_train)
 
 
 
