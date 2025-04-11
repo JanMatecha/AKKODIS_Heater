@@ -1,0 +1,119 @@
+import torch
+from torch import nn
+from torch.utils.data import Dataset, DataLoader, random_split
+import numpy as np
+import matplotlib.pyplot as plt
+from house import HouseGenerator
+import pandas
+
+
+class TemperatureDataset(Dataset):
+    def __init__(self, outdoor, indoor_init, indoor_rest):
+        self.x_out = torch.tensor(outdoor, dtype=torch.float32)
+        self.x_in0 = torch.tensor(indoor_init, dtype=torch.float32)
+        self.y_in_rest = torch.tensor(indoor_rest, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.x_out)
+
+    def __getitem__(self, idx):
+        x = torch.cat((self.x_out[idx], self.x_in0[idx]), dim=0)
+        y = self.y_in_rest[idx]
+        return x, y
+
+
+class TempPredictor(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(21, 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 19),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+def train_model(model, dataloader, val_loader, epochs=50, lr=1e-3):
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = nn.MSELoss()
+
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0
+        for xb, yb in dataloader:
+            pred = model(xb)
+            loss = loss_fn(pred, yb)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+
+        # Validation
+        model.eval()
+        val_loss = 0
+        with torch.no_grad():
+            for xb, yb in val_loader:
+                val_loss += loss_fn(model(xb), yb).item()
+
+        print(f"Epoch {epoch+1}/{epochs} - Train Loss: {total_loss/len(dataloader):.4f} | Val Loss: {val_loss/len(val_loader):.4f}")
+
+
+def plot_validation_examples(model, dataset, num_examples=3):
+    model.eval()
+    fig, axs = plt.subplots(num_examples, 1, figsize=(10, 4 * num_examples))
+    if num_examples == 1:
+        axs = [axs]
+
+    with torch.no_grad():
+        for i in range(num_examples):
+            x, y_true = dataset[i]
+            out_temp = x[:-1].numpy()
+            indoor0 = x[-1].item()
+            y_pred = model(x.unsqueeze(0)).squeeze().numpy()
+
+            indoor_pred = np.concatenate([[indoor0], y_pred])
+            indoor_true = np.concatenate([[indoor0], y_true.numpy()])
+
+            axs[i].plot(out_temp, label="Outdoor Temp")
+            axs[i].plot(indoor_true, label="Indoor True")
+            axs[i].plot(indoor_pred, '--', label="Indoor Predicted")
+            axs[i].set_title(f"Validation Sample {i+1}")
+            axs[i].legend()
+            axs[i].grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == "__main__":
+    ### 1. Generate data
+    #gen = HouseGenerator(m=12)
+    #outdoor, indoor_init, indoor_rest = gen.generate_samples(1000)
+    outdoor_data = pandas.read_csv("outside_temp_train.csv")
+    indoor_init_data = 270  
+    indoor_rest_data = pandas.read_csv("inside_temp_train.csv")
+    
+    outdoor = outdoor_data.values
+    indoor_init = indoor_init_data
+    indoor_rest = indoor_rest_data.values
+
+    ### 2. Dataset and Dataloaders
+    dataset = TemperatureDataset(outdoor, indoor_init, indoor_rest)
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_ds, val_ds = random_split(dataset, [train_size, val_size])
+    train_dl = DataLoader(train_ds, batch_size=32, shuffle=True)
+    val_dl = DataLoader(val_ds, batch_size=32)
+
+    ### 3. Model
+    model = TempPredictor()
+
+    ### 4. Training
+    train_model(model, train_dl, val_dl, epochs=20)
+
+    ### 5. Plot validation examples
+    plot_validation_examples(model, val_ds, num_examples=3)
